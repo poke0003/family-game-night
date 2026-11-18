@@ -505,6 +505,12 @@
           h('input', { type: 'checkbox', id: 'go-first', checked: sh.first, onchange: function () { sh.first = !sh.first; render(); } }),
           h('label', { for: 'go-first', text: G.firstLabel || (G.seats[0] ? 'I move first, as ' + G.seats[0] : 'I take the first turn') })),
         (G.options || []).map(function (o) {
+          if (o.choices) {
+            if (!o.choices.some(function (c) { return c[0] === sh.opts[o.key]; })) sh.opts[o.key] = o.choices[0][0];
+            var pickEl = h('select', { id: 'opt-' + o.key, onchange: function () { sh.opts[o.key] = pickEl.value; } },
+              o.choices.map(function (c) { return h('option', { value: c[0], selected: c[0] === sh.opts[o.key] }, c[1]); }));
+            return h('div', { class: 'first' }, h('label', { for: 'opt-' + o.key, text: o.label }), pickEl);
+          }
           var off = !!o.needs && !sh.opts[o.needs];
           if (off) sh.opts[o.key] = false;
           return h('div', { class: 'first' },
@@ -1550,9 +1556,11 @@
   var RAIL_FILL = { r: '#d6403a', o: '#ee8d2c', y: '#f2d13c', g: '#3fa34d', b: '#3d72d9', p: '#9152c9', k: '#2b2b2e', w: '#f3f0e6', x: '#a9adb3', A: '#e2e2e2' };
   var RAIL_MARK = { r: '◆', o: '▲', y: '●', g: '♣', b: '■', p: '♠', k: '✖', w: '✚', A: '★' };
   var RAIL_PLAYER = ['#e8459f', '#1fc3d6', '#a6dd3a', '#c48a3a'];
+  /* Where a town's name sits: x and baseline offsets and anchor, chosen per town by the map generator to avoid other names and routes. */
+  var RAIL_LABEL = [[20, 8, 'start'], [-20, 8, 'end'], [0, -22, 'middle'], [0, 36, 'middle'], [15, -16, 'start'], [-15, -16, 'end'], [15, 30, 'start'], [-15, 30, 'end'], [20, -6, 'start'], [-20, -6, 'end'], [20, 24, 'start'], [-20, 24, 'end']];
 
-  function railGeom(G, r) {
-    var R = G.routes[r], A = G.towns[R[0]], B = G.towns[R[1]];
+  function railGeom(M, r) {
+    var R = M.routes[r], A = M.towns[R[0]], B = M.towns[R[1]];
     var ax = A[1], ay = A[2], bx = B[1], by = B[2], dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy), nx = dy / len, ny = -dx / len;
     var off = R[5] < 0 ? 0 : (r < R[5] ? -8 : 8);
     ax += nx * off; ay += ny * off; bx += nx * off; by += ny * off;
@@ -1580,9 +1588,12 @@
     if (st.last && st.last.k === 'claim') hi[st.last.r] = hi[st.last.r] || 'last';
     (ui.show || []).forEach(function (t) { rings[t] = 1; });
     if (ui.sel && ui.sel.kind === 'town') rings[ui.sel.id] = 1;
-    out.push('<svg viewBox="0 -12 1000 724" role="img" aria-label="Railway map">');
-    G.routes.forEach(function (R, r) {
-      var geo = railGeom(G, r), n = R[2], trim = 20, seg = (geo.total - trim * 2) / n, o = st.own[r];
+    var M = G.mapOf(st), top = M.minY || 0;
+    out.push('<svg viewBox="0 ' + top + ' ' + M.w + ' ' + (M.h - top) + '" role="img" aria-label="Railway map of ' + M.name + '">');
+    if (M.land) out.push('<rect x="0" y="' + top + '" width="' + M.w + '" height="' + (M.h - top) + '" class="rwater"/>' +
+      (M.near ? '<path d="' + M.near + '" class="rnear"/>' : '') + '<path d="' + M.land + '" class="rland"/>' + (M.lakes ? '<path d="' + M.lakes + '" class="rlake"/>' : ''));
+    M.routes.forEach(function (R, r) {
+      var geo = railGeom(M, r), n = R[2], trim = 20, seg = (geo.total - trim * 2) / n, o = st.own[r];
       var mine = o !== '.', fill = mine ? RAIL_PLAYER[+o] : RAIL_FILL[R[3]], dim = !mine && G.blocked(st, r, seat < 0 ? 0 : seat) && st.n <= 3 ? ' opacity="0.3"' : '';
       if (hi[r]) out.push('<path d="' + geo.d + '" fill="none" stroke="' + (hi[r] === 'sel' ? '#ffffff' : '#ffd24a') + '" stroke-width="' + (hi[r] === 'sel' ? 26 : 22) + '" stroke-linecap="round" opacity="0.85" class="' + (hi[r] === 'last' ? 'rlast' : '') + '"/>');
       if (mine) {                               // a claimed route becomes one solid band in the owner's color
@@ -1599,14 +1610,15 @@
       }
       out.push('<path d="' + geo.d + '" fill="none" stroke="transparent" stroke-width="' + (R[5] < 0 ? 26 : 14) + '" data-r="' + r + '" class="rhit"/>');
     });
-    G.towns.forEach(function (T, t) {
-      var below = T[2] < 600, ly = below ? T[2] + 36 : T[2] - 24;
+    var names = [], hits = [];
+    M.towns.forEach(function (T, t) {
+      var L = RAIL_LABEL[T[3] === undefined ? 3 : T[3]];
       if (rings[t]) out.push('<circle cx="' + T[1] + '" cy="' + T[2] + '" r="25" fill="none" stroke="#ffd24a" stroke-width="6"/>');
       out.push('<circle cx="' + T[1] + '" cy="' + T[2] + '" r="12" fill="#f4ecd9" stroke="#1c1614" stroke-width="3.5"/>');
-      var anchor = T[1] > 880 ? 'end' : T[1] < 120 ? 'start' : 'middle', lx = anchor === 'end' ? Math.min(996, T[1] + 40) : anchor === 'start' ? Math.max(4, T[1] - 40) : T[1];
-      out.push('<text x="' + lx + '" y="' + ly + '" text-anchor="' + anchor + '" class="rtown' + (rings[t] ? ' on' : '') + '">' + T[0] + '</text>');
-      out.push('<circle cx="' + T[1] + '" cy="' + T[2] + '" r="30" fill="transparent" data-t="' + t + '" class="rhit"/>');
+      names.push('<text x="' + (T[1] + L[0]) + '" y="' + (T[2] + L[1]) + '" text-anchor="' + L[2] + '" class="rtown' + (rings[t] ? ' on' : '') + '">' + T[0] + '</text>');
+      hits.push('<circle cx="' + T[1] + '" cy="' + T[2] + '" r="30" fill="transparent" data-t="' + t + '" class="rhit"/>');
     });
+    out.push(names.join(''), hits.join(''));
     out.push('</svg>');
     return out.join('');
   }
@@ -1618,12 +1630,12 @@
 
   function renderRails(root, g, G, seat) {
     var st = g.state, gid = S.gid, active = g.status === 'active' && !S.readOnly, over = !!st.over || g.status !== 'active';
-    var myTurn = active && seat === st.turn && !over, T = G.towns;
+    var myTurn = active && seat === st.turn && !over, MAP = G.mapOf(st), T = MAP.towns;
     if (!S.rr || S.rr.key !== gid) S.rr = { key: gid, n: -1, sel: null, pay: '', card: -2, keep: {}, zoom: false, sure: false, show: [] };
     var U = S.rr;
     if (U.n !== g.n) { U.n = g.n; U.card = -2; U.pay = ''; U.sure = false; U.keep = {}; if (U.sel && U.sel.kind === 'route' && st.own[U.sel.id] !== '.') U.sel = null; }
     var tn = function (i) { return T[i][0]; };
-    var rname = function (r) { var R = G.routes[r]; return tn(R[0]) + ' – ' + tn(R[1]); };
+    var rname = function (r) { var R = MAP.routes[r]; return tn(R[0]) + ' – ' + tn(R[1]); };
     var who = function (i) { return pname(g.players[i]) + (i === seat ? ' (you)' : ''); };
     var text = function (t) { return t.replace(/@(\d)/g, function (m, d) { return pname(g.players[+d]); }); };
     var hand = seat >= 0 ? st.hands[seat] : null;
@@ -1640,7 +1652,7 @@
       else U.sel = { kind: 'town', id: +el.getAttribute('data-t') };
       U.pay = ''; U.sure = false; render();
     });
-    kids.push(h('section', { class: 'rmapwrap' }, map,
+    kids.push(h('section', { class: 'rmapwrap' }, h('p', { class: 'rmapname', text: 'Map: ' + MAP.name }), map,
       h('div', { class: 'row' },
         h('button', { class: 'btn small', type: 'button', id: 'rr-zoom', onclick: function () { U.zoom = !U.zoom; render(); } }, U.zoom ? 'Fit the map to the screen' : 'Make the map bigger'),
         U.show.length ? h('button', { class: 'btn small ghost', type: 'button', onclick: function () { U.show = []; render(); } }, 'Clear highlights') : null)));
@@ -1656,7 +1668,7 @@
         h('h3', { text: st.phase === 'start' ? 'Pick your first destination tickets' : 'New destination tickets' }),
         h('p', { class: 'note', text: 'Keep at least ' + min + '. Tickets you finish add their points. Unfinished ones are taken away at the end.' }),
         h('div', { class: 'rtix' }, offer.map(function (c) {
-          var Tk = G.tickets[parseInt(c, 36)], on = !!U.keep[c];
+          var Tk = MAP.tickets[parseInt(c, 36)], on = !!U.keep[c];
           return h('button', { class: 'rticket' + (on ? ' on' : ''), type: 'button', 'aria-pressed': on ? 'true' : 'false', onclick: function () {
             U.keep[c] = !on; U.show = [Tk[0], Tk[1]]; render();
           } }, h('span', { class: 'rt-towns', text: tn(Tk[0]) + ' to ' + tn(Tk[1]) }), h('strong', { class: 'rt-pts', text: Tk[2] + ' pts' }), h('span', { class: 'rt-tick', text: on ? 'Keeping' : 'Tap to keep' }));
@@ -1672,16 +1684,16 @@
     if (U.sel && st.step !== 'keep') {
       if (U.sel.kind === 'town') {
         var mineR = [];
-        G.routes.forEach(function (R, r) { if (R[0] === U.sel.id || R[1] === U.sel.id) mineR.push(r); });
+        MAP.routes.forEach(function (R, r) { if (R[0] === U.sel.id || R[1] === U.sel.id) mineR.push(r); });
         kids.push(h('section', { class: 'rpanel' }, h('h3', { text: tn(U.sel.id) }), h('p', { class: 'note', text: 'Routes from here. Tap one to look at it.' }),
           h('div', { class: 'rlist' }, mineR.map(function (r) {
-            var R = G.routes[r], o = st.own[r];
+            var R = MAP.routes[r], o = st.own[r];
             return h('button', { class: 'rrow', type: 'button', onclick: function () { U.sel = { kind: 'route', id: r }; render(); } },
               h('span', { class: 'rchip c-' + R[3] }, railCard(R[3])), h('span', { class: 'rrname', text: rname(r) }),
               h('span', { class: 'rmeta', text: R[2] + (R[2] === 1 ? ' train' : ' trains') + (o !== '.' ? ', ' + pname(g.players[+o]) + '’s' : '') }));
           }))));
       } else {
-        var r = U.sel.id, R = G.routes[r], o = st.own[r], opts = [], why = '';
+        var r = U.sel.id, R = MAP.routes[r], o = st.own[r], opts = [], why = '';
         if (o !== '.') why = 'Claimed by ' + who(+o) + '.';
         else if (seat >= 0 && G.blocked(st, r, seat)) why = st.own[R[5]] === String(seat) ? 'You already have the other half of this double route.' : 'With 2 or 3 players only one half of a double route can be used.';
         else if (seat >= 0 && R[2] > st.trains[seat]) why = 'You only have ' + st.trains[seat] + ' trains left.';
@@ -1731,11 +1743,11 @@
       if (st.step !== 'second') {
         var claimable = [];
         moves.forEach(function (m) { if (m.k === 'claim' && claimable.indexOf(m.r) < 0) claimable.push(m.r); });
-        claimable.sort(function (a, b) { return G.routes[b][2] - G.routes[a][2] || rname(a).localeCompare(rname(b)); });
+        claimable.sort(function (a, b) { return MAP.routes[b][2] - MAP.routes[a][2] || rname(a).localeCompare(rname(b)); });
         kids.push(h('details', { class: 'rpanel', open: claimable.length > 0 && claimable.length <= 8 ? true : null },
           h('summary', { text: claimable.length ? 'Routes you can claim now (' + claimable.length + ')' : 'No routes you can claim yet' }),
           h('div', { class: 'rlist' }, claimable.map(function (r) {
-            var R = G.routes[r];
+            var R = MAP.routes[r];
             return h('button', { class: 'rrow' + (U.sel && U.sel.id === r && U.sel.kind === 'route' ? ' on' : ''), type: 'button', onclick: function () { U.sel = { kind: 'route', id: r }; U.pay = ''; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } },
               h('span', { class: 'rchip c-' + R[3] }, railCard(R[3])), h('span', { class: 'rrname', text: rname(r) }), h('span', { class: 'rmeta', text: R[2] + ' · +' + G.points[R[2]] }));
           }))));
@@ -1755,7 +1767,7 @@
       var mine = G.ticketIds(st.tix[seat]);
       kids.push(h('section', { class: 'rpanel' }, h('h3', { text: 'Your destination tickets' }),
         mine.length ? h('div', { class: 'rlist' }, mine.map(function (t) {
-          var Tk = G.tickets[t], done = G.ticketDone(st, seat, t), on = U.show[0] === Tk[0] && U.show[1] === Tk[1];
+          var Tk = MAP.tickets[t], done = G.ticketDone(st, seat, t), on = U.show[0] === Tk[0] && U.show[1] === Tk[1];
           return h('button', { class: 'rrow' + (on ? ' on' : '') + (done ? ' done' : ''), type: 'button', onclick: function () { U.show = on ? [] : [Tk[0], Tk[1]]; render(); } },
             h('span', { class: 'rdone', text: done ? '✓' : '•' }), h('span', { class: 'rrname', text: tn(Tk[0]) + ' to ' + tn(Tk[1]) }),
             h('span', { class: 'rmeta', text: Tk[2] + ' pts' + (done ? ', done' : '') }));
@@ -1783,7 +1795,7 @@
         h('ul', { class: 'rplayers' }, g.players.map(function (p, i) {
           return h('li', null, h('span', { class: 'rswatch', style: 'background:' + RAIL_PLAYER[i] }),
             h('div', { class: 'cwho' }, h('strong', { text: who(i) }),
-              h('span', { text: G.ticketIds(st.tix[i]).map(function (t) { var Tk = G.tickets[t]; return (G.ticketDone(st, i, t) ? '✓ ' : '✗ ') + tn(Tk[0]) + '–' + tn(Tk[1]) + ' ' + Tk[2]; }).join(', ') })));
+              h('span', { text: G.ticketIds(st.tix[i]).map(function (t) { var Tk = MAP.tickets[t]; return (G.ticketDone(st, i, t) ? '✓ ' : '✗ ') + tn(Tk[0]) + '–' + tn(Tk[1]) + ' ' + Tk[2]; }).join(', ') })));
         }))));
     }
     kids.push(h('ul', { class: 'clog' }, st.log.slice().reverse().map(function (t) { return h('li', { text: text(t) }); })));
