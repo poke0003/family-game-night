@@ -1615,7 +1615,7 @@
       var L = RAIL_LABEL[T[3] === undefined ? 3 : T[3]];
       if (rings[t]) out.push('<circle cx="' + T[1] + '" cy="' + T[2] + '" r="25" fill="none" stroke="#ffd24a" stroke-width="6"/>');
       out.push('<circle cx="' + T[1] + '" cy="' + T[2] + '" r="12" fill="#f4ecd9" stroke="#1c1614" stroke-width="3.5"/>');
-      names.push('<text x="' + (T[1] + L[0]) + '" y="' + (T[2] + L[1]) + '" text-anchor="' + L[2] + '" class="rtown' + (rings[t] ? ' on' : '') + '">' + T[0] + '</text>');
+      names.push('<text x="' + (T[1] + L[0]) + '" y="' + (T[2] + L[1] * (M.fs || 25) / 25) + '" text-anchor="' + L[2] + '" font-size="' + (M.fs || 25) + '" class="rtown' + (rings[t] ? ' on' : '') + '">' + T[0] + '</text>');
       hits.push('<circle cx="' + T[1] + '" cy="' + T[2] + '" r="30" fill="transparent" data-t="' + t + '" class="rhit"/>');
     });
     out.push(names.join(''), hits.join(''));
